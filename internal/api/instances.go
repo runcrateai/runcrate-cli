@@ -9,21 +9,23 @@ import (
 
 // Instance represents an instance from the v1 API.
 type Instance struct {
-	ID          string  `json:"id"`
-	Name        string  `json:"name"`
-	Status      string  `json:"status"`
-	GPUType     string  `json:"gpu_type"`
-	GPUCount    int     `json:"gpu_count"`
-	CPUCores    int     `json:"cpu_cores"`
-	Memory      int     `json:"memory"`
-	Storage     int     `json:"storage"`
-	Region      string  `json:"region"`
-	IP          string  `json:"ip"`
-	OSImage     string  `json:"os_image"`
-	CostPerHour float64 `json:"cost_per_hour"`
-	DeployedAt  string  `json:"deployed_at"`
-	CreatedAt   string  `json:"created_at"`
-	UpdatedAt   string  `json:"updated_at"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Status   string `json:"status"`
+	GPUType  string `json:"gpu_type"`
+	GPUCount int    `json:"gpu_count"`
+	CPUCores int    `json:"cpu_cores"`
+	Memory   int    `json:"memory"`
+	Storage  int    `json:"storage"`
+	Region   string `json:"region"`
+	IP       string `json:"ip"`
+	OSImage  string `json:"os_image"`
+	// DeploymentType is the kind of machine: vm, baremetal or container.
+	DeploymentType string  `json:"deployment_type"`
+	CostPerHour    float64 `json:"cost_per_hour"`
+	DeployedAt     string  `json:"deployed_at"`
+	CreatedAt      string  `json:"created_at"`
+	UpdatedAt      string  `json:"updated_at"`
 
 	// Auto stop guardrails. nil means off (no limit) or, for AutoStopAt and
 	// StopReason, not applicable yet.

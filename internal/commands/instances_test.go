@@ -181,3 +181,11 @@ func TestParseAutoStopFlag(t *testing.T) {
 		t.Error("empty value accepted, want an error")
 	}
 }
+
+func TestKindText(t *testing.T) {
+	for in, want := range map[string]string{"vm": "VM", "baremetal": "Bare metal", "container": "Container", "": "-", "gpu-pod": "gpu-pod"} {
+		if got := kindText(in); got != want {
+			t.Errorf("kindText(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
