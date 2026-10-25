@@ -27,6 +27,10 @@ func mockInstancesServer(t *testing.T) *httptest.Server {
 				{ID: "type-a100", GPUType: "A100", GPUCount: 1, CPUCores: 30, MemoryGB: 200, StorageGB: 512, Region: "mumbai-india-1", HourlyRate: 1.42},
 				{ID: "type-h100", GPUType: "H100", GPUCount: 1, CPUCores: 32, MemoryGB: 256, StorageGB: 1024, Region: "us-east-1", HourlyRate: 3.50},
 			}
+			// Community hosts are listed only to a caller who opts in, as the API does.
+			if r.URL.Query().Get("include_community") == "true" {
+				types = append(types, InstanceType{ID: "type-4090", GPUType: "RTX4090", GPUCount: 1, Region: "pl-waw", DeploymentType: "container", HostTier: "community", HourlyRate: 0.89})
+			}
 			if gpu != "" {
 				filtered := []InstanceType{}
 				for _, t := range types {
@@ -111,7 +115,7 @@ func TestListInstanceTypes(t *testing.T) {
 	client := NewClient("rc_live_test", server.URL)
 
 	// Unfiltered
-	types, err := client.ListInstanceTypes("", "", 0)
+	types, err := client.ListInstanceTypes("", "", 0, false)
 	if err != nil {
 		t.Fatalf("ListInstanceTypes() error: %v", err)
 	}
@@ -119,8 +123,17 @@ func TestListInstanceTypes(t *testing.T) {
 		t.Fatalf("got %d types, want 2", len(types))
 	}
 
+	// Community hosts only when asked for
+	types, err = client.ListInstanceTypes("", "", 0, true)
+	if err != nil {
+		t.Fatalf("ListInstanceTypes(include community) error: %v", err)
+	}
+	if len(types) != 3 || types[2].HostTier != "community" {
+		t.Fatalf("with community hosts got %+v, want the 2 datacenter types and the community one", types)
+	}
+
 	// Filtered by GPU
-	types, err = client.ListInstanceTypes("A100", "", 0)
+	types, err = client.ListInstanceTypes("A100", "", 0, false)
 	if err != nil {
 		t.Fatalf("ListInstanceTypes(A100) error: %v", err)
 	}

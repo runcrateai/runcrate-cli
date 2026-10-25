@@ -21,11 +21,14 @@ type Instance struct {
 	IP       string `json:"ip"`
 	OSImage  string `json:"os_image"`
 	// DeploymentType is the kind of machine: vm, baremetal or container.
-	DeploymentType string  `json:"deployment_type"`
-	CostPerHour    float64 `json:"cost_per_hour"`
-	DeployedAt     string  `json:"deployed_at"`
-	CreatedAt      string  `json:"created_at"`
-	UpdatedAt      string  `json:"updated_at"`
+	DeploymentType string `json:"deployment_type"`
+	// HostTier is who runs the machine: "datacenter", or "community" for an
+	// independent host who can access it. Absent reads as datacenter.
+	HostTier    string  `json:"host_tier"`
+	CostPerHour float64 `json:"cost_per_hour"`
+	DeployedAt  string  `json:"deployed_at"`
+	CreatedAt   string  `json:"created_at"`
+	UpdatedAt   string  `json:"updated_at"`
 
 	// Auto stop guardrails. nil means off (no limit) or, for AutoStopAt and
 	// StopReason, not applicable yet.
@@ -45,6 +48,7 @@ type InstanceType struct {
 	StorageGB      int     `json:"storage_gb"`
 	Region         string  `json:"region"`
 	DeploymentType string  `json:"deployment_type"`
+	HostTier       string  `json:"host_tier"`
 	HourlyRate     float64 `json:"hourly_rate"`
 }
 
@@ -71,6 +75,10 @@ type CreateInstanceRequest struct {
 	// Optional auto stop guardrails, in whole minutes. Omitted when nil.
 	MaxRuntimeMinutes   *int `json:"max_runtime_minutes,omitempty"`
 	IdleShutdownMinutes *int `json:"idle_shutdown_minutes,omitempty"`
+
+	// IncludeCommunity lets a community host run it. Off (omitted): datacenter
+	// machines only.
+	IncludeCommunity bool `json:"include_community,omitempty"`
 }
 
 // EnvVar is a key-value pair for instance environment variables.
@@ -149,8 +157,9 @@ func (c *Client) ListInstances(search string) ([]Instance, error) {
 	return result.Data, nil
 }
 
-// ListInstanceTypes returns available GPU instance types with optional filters.
-func (c *Client) ListInstanceTypes(gpuType, region string, gpuCount int) ([]InstanceType, error) {
+// ListInstanceTypes returns available GPU instance types with optional filters:
+// datacenter machines, plus community hosts when includeCommunity is set.
+func (c *Client) ListInstanceTypes(gpuType, region string, gpuCount int, includeCommunity bool) ([]InstanceType, error) {
 	var params []string
 	if gpuType != "" {
 		params = append(params, "gpu_type="+gpuType)
@@ -160,6 +169,9 @@ func (c *Client) ListInstanceTypes(gpuType, region string, gpuCount int) ([]Inst
 	}
 	if gpuCount > 0 {
 		params = append(params, fmt.Sprintf("gpu_count=%d", gpuCount))
+	}
+	if includeCommunity {
+		params = append(params, "include_community=true")
 	}
 
 	path := "/api/v1/instances/types"

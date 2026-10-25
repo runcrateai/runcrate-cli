@@ -76,7 +76,6 @@ func formatOptionalMinutes(minutes *int) string {
 	return formatMinutes(*minutes)
 }
 
-// stopReasonText maps the API stop_reason to plain words.
 // kindText is how a machine's kind (the API's deployment_type) reads:
 // "VM", "Bare metal" or "Container". Anything else is shown as sent, and
 // nothing as "-".
@@ -95,6 +94,17 @@ func kindText(deploymentType string) string {
 	}
 }
 
+// hostText is who runs a machine (the API's host_tier): "Community" for an
+// independent host, otherwise "Datacenter" (absent included: every machine
+// before community hosts ran in one).
+func hostText(hostTier string) string {
+	if hostTier == "community" {
+		return "Community"
+	}
+	return "Datacenter"
+}
+
+// stopReasonText maps the API stop_reason to plain words.
 func stopReasonText(reason string) string {
 	switch reason {
 	case "user":
@@ -185,7 +195,7 @@ var instancesListCmd = &cobra.Command{
 		}
 
 		w := newTable()
-		fmt.Fprintf(w, "NAME\tSTATUS\tGPU\tKIND\tIP\t$/HR\n")
+		fmt.Fprintf(w, "NAME\tSTATUS\tGPU\tKIND\tHOST\tIP\t$/HR\n")
 		for _, inst := range instances {
 			gpu := inst.GPUType
 			if inst.GPUCount > 1 {
@@ -195,10 +205,10 @@ var instancesListCmd = &cobra.Command{
 			if ip == "" {
 				ip = "-"
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t$%.2f\n",
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t$%.2f\n",
 				truncate(inst.Name, 24),
 				statusColor(inst.Status),
-				gpu, kindText(inst.DeploymentType), ip, inst.CostPerHour,
+				gpu, kindText(inst.DeploymentType), hostText(inst.HostTier), ip, inst.CostPerHour,
 			)
 		}
 		return w.Flush()
@@ -225,7 +235,8 @@ var instancesTypesCmd = &cobra.Command{
 			return err
 		}
 
-		types, err := client.ListInstanceTypes(gpuType, region, gpuCount)
+		includeCommunity, _ := cmd.Flags().GetBool("include-community")
+		types, err := client.ListInstanceTypes(gpuType, region, gpuCount, includeCommunity)
 		if err != nil {
 			return fmt.Errorf("fetching instance types: %w", err)
 		}
@@ -240,11 +251,11 @@ var instancesTypesCmd = &cobra.Command{
 		}
 
 		w := newTable()
-		fmt.Fprintf(w, "ID\tGPU\tCOUNT\tKIND\tCPU\tRAM\tSTORAGE\tREGION\t$/HR\n")
+		fmt.Fprintf(w, "ID\tGPU\tCOUNT\tKIND\tHOST\tCPU\tRAM\tSTORAGE\tREGION\t$/HR\n")
 		for _, t := range types {
-			fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%d cores\t%d GB\t%d GB\t%s\t$%.2f\n",
+			fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%d cores\t%d GB\t%d GB\t%s\t$%.2f\n",
 				t.ID,
-				t.GPUType, t.GPUCount, kindText(t.DeploymentType),
+				t.GPUType, t.GPUCount, kindText(t.DeploymentType), hostText(t.HostTier),
 				t.CPUCores, t.MemoryGB, t.StorageGB,
 				t.Region, t.HourlyRate,
 			)
@@ -257,14 +268,19 @@ var instancesTypesCmd = &cobra.Command{
 
 // addInstanceOnlyFlags registers the create flags that only an instance takes,
 // shared by instances create and schedule create.
+// communityFlagHelp says what --include-community opts in to.
+const communityFlagHelp = "Also use machines run by community hosts: independent operators who run the hardware and can access the machine, never on reserved terms. Off by default (datacenter machines only)"
+
 func addInstanceOnlyFlags(cmd *cobra.Command) {
-	cmd.Flags().String("type-id", "", "Instance type ID from 'runcrate instances types'")
+	cmd.Flags().String("type-id", "", "Instance type ID from 'runcrate instances types' (a community host's needs --include-community)")
+	cmd.Flags().Bool("include-community", false, communityFlagHelp)
 	cmd.Flags().String("idle-stop", "",
 		"Stop the instance after this long with GPU use under 5% and nobody connected (SSH, web terminal or editor), 5m to 24h (e.g. 30m), GPU instances only. Recommended for unattended work")
 }
 
 // buildInstanceRequest turns the create flags (name, gpu, gpu-count, region,
-// template, type-id, volume, max-runtime, idle-stop) into the create body.
+// template, type-id, volume, max-runtime, idle-stop, include-community) into
+// the create body.
 func buildInstanceRequest(cmd *cobra.Command) (api.CreateInstanceRequest, error) {
 	var req api.CreateInstanceRequest
 	name, _ := cmd.Flags().GetString("name")
@@ -276,6 +292,7 @@ func buildInstanceRequest(cmd *cobra.Command) (api.CreateInstanceRequest, error)
 	volumeID, _ := cmd.Flags().GetString("volume")
 	maxRuntimeRaw, _ := cmd.Flags().GetString("max-runtime")
 	idleStopRaw, _ := cmd.Flags().GetString("idle-stop")
+	includeCommunity, _ := cmd.Flags().GetBool("include-community")
 
 	maxRuntime, err := parseMinutesFlag("max-runtime", maxRuntimeRaw, maxRuntimeMaxMinutes)
 	if err != nil {
@@ -308,6 +325,7 @@ func buildInstanceRequest(cmd *cobra.Command) (api.CreateInstanceRequest, error)
 		MaxRuntimeMinutes:   maxRuntime,
 		IdleShutdownMinutes: idleStop,
 		StorageID:           volumeID,
+		IncludeCommunity:    includeCommunity,
 	}, nil
 }
 
@@ -410,6 +428,7 @@ var instancesInfoCmd = &cobra.Command{
 		fmt.Printf("  Status:       %s\n", statusColor(instance.Status))
 		fmt.Printf("  GPU:          %dx %s\n", instance.GPUCount, instance.GPUType)
 		fmt.Printf("  Kind:         %s\n", kindText(instance.DeploymentType))
+		fmt.Printf("  Host:         %s\n", hostText(instance.HostTier))
 		fmt.Printf("  CPU:          %d cores\n", instance.CPUCores)
 		fmt.Printf("  Memory:       %d GB\n", instance.Memory)
 		fmt.Printf("  Storage:      %d GB\n", instance.Storage)
@@ -619,6 +638,7 @@ func init() {
 	instancesTypesCmd.Flags().String("gpu", "", "Filter by GPU type (e.g., A100 or A100:4)")
 	instancesTypesCmd.Flags().String("region", "", "Filter by region (e.g., us-east)")
 	instancesTypesCmd.Flags().Int("gpu-count", 0, "Filter by GPU count")
+	instancesTypesCmd.Flags().Bool("include-community", false, communityFlagHelp)
 
 	// create
 	instancesCreateCmd.Flags().String("name", "", "Instance name (required)")
