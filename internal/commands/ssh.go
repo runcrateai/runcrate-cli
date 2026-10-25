@@ -35,22 +35,31 @@ Use -- to run a remote command without opening a shell:
 	},
 }
 
-// runSSH handles the SSH certificate flow for both ssh and cp commands.
-// Returns the temp dir path and SSH args prefix for cp to reuse, or execs ssh directly.
+// runSSH opens ssh to an instance by name or ID, running the command after --
+// when there is one.
 func runSSH(cmd *cobra.Command, args []string, dryRun bool) error {
 	client, err := loadClient()
 	if err != nil {
 		return err
 	}
 
-	instanceRef := args[0]
-
 	// Resolve instance ID (need the UUID for the certificate API)
-	instanceID, ip, err := resolveInstance(client, instanceRef)
+	instanceID, ip, err := resolveInstance(client, args[0])
 	if err != nil {
 		return err
 	}
 
+	var remote []string
+	if dashIdx := cmd.ArgsLenAtDash(); dashIdx >= 0 && dashIdx < len(args) {
+		remote = args[dashIdx:]
+	}
+	return execSSH(client, instanceID, ip, nil, remote)
+}
+
+// execSSH runs ssh to one instance (by UUID, at ip unless the certificate names
+// another address) with an ephemeral key signed for it: options go before the
+// destination, remote after it.
+func execSSH(client *api.Client, instanceID, ip string, options, remote []string) error {
 	// Generate ephemeral Ed25519 key pair
 	pubKey, privKey, err := generateEphemeralKeyPair()
 	if err != nil {
@@ -90,13 +99,9 @@ func runSSH(cmd *cobra.Command, args []string, dryRun bool) error {
 	sshArgs = append(sshArgs, "-o", "CertificateFile="+certPath)
 	sshArgs = append(sshArgs, "-i", keyPath)
 	sshArgs = append(sshArgs, "-p", port)
+	sshArgs = append(sshArgs, options...)
 	sshArgs = append(sshArgs, fmt.Sprintf("%s@%s", user, ip))
-
-	// If there are args after --, pass them as the remote command
-	dashIdx := cmd.ArgsLenAtDash()
-	if dashIdx >= 0 && dashIdx < len(args) {
-		sshArgs = append(sshArgs, args[dashIdx:]...)
-	}
+	sshArgs = append(sshArgs, remote...)
 
 	// Find ssh binary
 	sshBin, err := exec.LookPath("ssh")

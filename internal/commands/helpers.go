@@ -86,9 +86,9 @@ func execOrRun(bin string, argv []string) error {
 // statusColor returns the status with a simple text indicator.
 func statusColor(status string) string {
 	switch strings.ToLower(status) {
-	case "running", "deployed", "succeeded":
+	case "running", "deployed", "succeeded", "ready", "passed":
 		return "● " + status
-	case "creating", "deploying", "awaiting_provider", "queued", "starting":
+	case "creating", "deploying", "awaiting_provider", "queued", "starting", "provisioning", "installing", "terminating":
 		return "◌ " + status
 	case "terminated", "failed", "cancelled", "timed_out":
 		return "✕ " + status
