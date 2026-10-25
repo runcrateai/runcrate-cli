@@ -101,11 +101,11 @@ func renderTestResult(w io.Writer, t *api.ClusterTest) error {
 	}
 	r := t.Result
 	fmt.Fprintf(w, "NCCL all-reduce test %s across %d GPUs on %d nodes: peak bus bandwidth %.1f GB/s.\n",
-		t.Status, r.GPUs, r.Nodes, r.PeakBusbwGbps)
+		t.Status, r.GPUs, r.Nodes, r.PeakBusbwGBs)
 	tw := newTableTo(w)
 	fmt.Fprintf(tw, "SIZE\tTIME (us)\tALGBW (GB/s)\tBUSBW (GB/s)\n")
 	for _, s := range r.Sizes {
-		fmt.Fprintf(tw, "%s\t%.1f\t%.2f\t%.2f\n", formatBytes(s.Bytes), s.TimeUs, s.AlgbwGbps, s.BusbwGbps)
+		fmt.Fprintf(tw, "%s\t%.1f\t%.2f\t%.2f\n", formatBytes(s.Bytes), s.TimeUs, s.AlgbwGBs, s.BusbwGBs)
 	}
 	return tw.Flush()
 }

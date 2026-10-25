@@ -138,10 +138,10 @@ type ClusterEvent struct {
 
 // NCCLSize is the all-reduce result at one message size.
 type NCCLSize struct {
-	Bytes     int64   `json:"bytes"`
-	AlgbwGbps float64 `json:"algbw_gbps"`
-	BusbwGbps float64 `json:"busbw_gbps"`
-	TimeUs    float64 `json:"time_us"`
+	Bytes    int64   `json:"bytes"`
+	AlgbwGBs float64 `json:"algbw_gb_s"`
+	BusbwGBs float64 `json:"busbw_gb_s"`
+	TimeUs   float64 `json:"time_us"`
 }
 
 // ClusterTest is an NCCL all-reduce test across every GPU of a cluster.
@@ -156,11 +156,11 @@ type ClusterTest struct {
 
 // ClusterTestResult is a finished test: bandwidth per message size, or Error.
 type ClusterTestResult struct {
-	Sizes         []NCCLSize `json:"sizes"`
-	PeakBusbwGbps float64    `json:"peak_busbw_gbps"`
-	Nodes         int        `json:"nodes"`
-	GPUs          int        `json:"gpus"`
-	Error         string     `json:"error,omitempty"`
+	Sizes        []NCCLSize `json:"sizes"`
+	PeakBusbwGBs float64    `json:"peak_busbw_gb_s"`
+	Nodes        int        `json:"nodes"`
+	GPUs         int        `json:"gpus"`
+	Error        string     `json:"error,omitempty"`
 }
 
 // ClusterDetail is GET /api/v1/clusters/{id}.

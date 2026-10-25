@@ -116,8 +116,8 @@ func TestRenderOfferTableShowsRatesAndCommunity(t *testing.T) {
 func TestRenderTestResult(t *testing.T) {
 	passed := &api.ClusterTest{ID: "t-1", Status: "passed"}
 	passed.Result = &api.ClusterTestResult{
-		Sizes:         []api.NCCLSize{{Bytes: 1 << 30, AlgbwGbps: 40.1, BusbwGbps: 75.2, TimeUs: 26800}},
-		PeakBusbwGbps: 75.2, Nodes: 2, GPUs: 16,
+		Sizes:        []api.NCCLSize{{Bytes: 1 << 30, AlgbwGBs: 40.1, BusbwGBs: 75.2, TimeUs: 26800}},
+		PeakBusbwGBs: 75.2, Nodes: 2, GPUs: 16,
 	}
 	var buf bytes.Buffer
 	if err := renderTestResult(&buf, passed); err != nil {
