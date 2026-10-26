@@ -283,16 +283,21 @@ func declinedError(t *api.TopUp) error {
 }
 
 // topUpError adds the key to send again when the top-up may have been made:
-// no answer came, or it is being charged right now.
+// no answer came, the server failed (5xx, possibly after the charge), or it is
+// being charged right now (409 idempotency_in_progress).
 func topUpError(err error, key string) error {
 	var ne *api.SubmitNetworkError
 	if errors.As(err, &ne) {
-		return fmt.Errorf("topping up: %w\n  The top-up may have been made. Run the same command with --idempotency-key %s: "+
-			"it answers that top-up instead of charging again", err, ne.Key)
+		key = ne.Key
 	}
 	var ae *api.APIError
-	if errors.As(err, &ae) && ae.Status == http.StatusConflict && ae.Code == "conflict" {
-		return fmt.Errorf("topping up: %w\n  Check it in a moment with --idempotency-key %s", err, key)
+	isAPI := errors.As(err, &ae)
+	switch {
+	case ne != nil, isAPI && ae.Status >= 500:
+		return fmt.Errorf("topping up: %w\n  The top-up may have been made. Run the same command with --idempotency-key %s: "+
+			"it answers that top-up instead of charging again", err, key)
+	case isAPI && ae.Status == http.StatusConflict && (ae.Code == "conflict" || ae.Details["reason"] == "idempotency_in_progress"):
+		return fmt.Errorf("topping up: %w\n  It is being charged right now. Check it in a moment with --idempotency-key %s", err, key)
 	}
 	return fmt.Errorf("topping up: %w", err)
 }

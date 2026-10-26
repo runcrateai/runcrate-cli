@@ -155,6 +155,33 @@ func TestTopUpRefusalsShowTheServerMessage(t *testing.T) {
 	}
 }
 
+// A 5xx may come after the card was charged, and a 409 in progress is being
+// charged right now: both say which key to send again. A refusal does not.
+func TestTopUpServerErrorsTellTheKeyToSendAgain(t *testing.T) {
+	cases := []struct {
+		status   int
+		body     string
+		wantHint bool
+	}{
+		{http.StatusBadGateway, `{"error":{"code":"internal_error","message":"Something went wrong."}}`, true},
+		{http.StatusInternalServerError, ``, true},
+		{http.StatusConflict, `{"error":{"code":"IDEMPOTENCY_IN_PROGRESS","message":"This top-up is being charged.","details":{"reason":"idempotency_in_progress"}}}`, true},
+		{http.StatusForbidden, `{"error":{"code":"BILLING_PERMISSION_REQUIRED","message":"This key cannot top up."}}`, false},
+	}
+	for _, c := range cases {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(c.status)
+			w.Write([]byte(c.body))
+		}))
+		_, err := api.NewClient("rc_live_x", server.URL).TopUp(50, "k-6")
+		server.Close()
+		err = topUpError(err, "k-6")
+		if got := err != nil && strings.Contains(err.Error(), "--idempotency-key k-6"); got != c.wantHint {
+			t.Errorf("HTTP %d: err = %v, want key hint %v", c.status, err, c.wantHint)
+		}
+	}
+}
+
 func TestTopUpWithNoAnswerTellsTheKeyToSendAgain(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	url := server.URL
