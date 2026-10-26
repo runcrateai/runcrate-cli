@@ -235,9 +235,9 @@ const (
 	GroupCancelTimeout = 315 * time.Second
 )
 
-// SubmitNetworkError is a submit whose answer never came: the job may have
-// been created. Sending the same request with Key within 24 hours answers that
-// job instead of starting another.
+// SubmitNetworkError is a submit (a job or a top-up) whose answer never came:
+// it may have been made. Sending the same request with Key answers that one
+// instead of making another.
 type SubmitNetworkError struct {
 	Key string
 	Err error
