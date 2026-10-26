@@ -138,26 +138,32 @@ runcrate schedule delete <id> [--yes]  # what it already started keeps running
 
 A cluster is several GPU machines on one private network, with SSH between them,
 `/shared` on every node, and optionally Slurm, Kubernetes or Ray installed across
-them. It is all or nothing: every node starts or none does, and a cluster that could
-not start costs nothing. Billing starts when every node is up and runs until you
-delete the cluster, which stops every node together.
+them. It is bought by the machine: each machine has 1, 2, 4 or 8 GPUs, and the
+price is per hour for the whole cluster, with the price per machine under it. It is
+all or nothing: every machine starts or none does, and a cluster that could not
+start costs nothing. Billing starts when every machine is up and runs until you
+delete the cluster, which stops every machine together.
 
 ```bash
-runcrate clusters offers --gpu H100:8 --nodes 4      # where it can start, $/hr per node and for the cluster
+runcrate clusters offers --gpu H100 --nodes 4        # the machines it can start on: $/hr per machine and for the cluster
+runcrate clusters offers --gpu H100:8 --nodes 4      # only machines with 8 GPUs each
 runcrate clusters create --name train --offer <offer> --nodes 4 --stack slurm
 runcrate clusters list [--all] [-q] [--json]
-runcrate clusters get train                          # nodes, hostfile, torchrun / mpirun / sbatch, events
+runcrate clusters get train                          # machines, hostfile, torchrun / mpirun / sbatch, events
 runcrate clusters ssh train [--node 2] [-- sinfo]    # the head is node 0
 runcrate clusters kubeconfig train -o kubeconfig.yaml  # Kubernetes clusters
 runcrate clusters tunnel train                       # Kubernetes API on 6443, Ray dashboard on 8265
 runcrate clusters test train [-d]                    # NCCL all-reduce bandwidth across every GPU
-runcrate clusters delete train [--yes]               # terminates every node
+runcrate clusters delete train [--yes]               # terminates every machine
 ```
 
 - `--stack` is `none` (SSH, hostfile and torchrun only), `slurm`, `kubernetes` or `ray`;
   `offers` lists the ones each offer can run.
+- Self-serve clusters run on Ethernet: good for independent jobs, Slurm job arrays
+  and Ray tasks, not for training one model across machines. Clusters on a fast
+  InfiniBand or RoCE network are coming; ask us for one.
 - Offers are on datacenter hosts unless you pass `--include-community` (to both
-  `offers` and `create`).
+  `offers` and `create`). With `create --volume`, list offers with `--with-volume`.
 
 ## Secrets
 

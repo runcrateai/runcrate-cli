@@ -25,9 +25,25 @@ func stackName(stack string) string {
 	return stack
 }
 
-// clusterShape reads like the dashboard: "8x H100 x 4 nodes".
+// clusterShape reads like the dashboard: "4 nodes of 8x H100".
 func clusterShape(gpusPerNode int, gpuType string, nodes int) string {
-	return fmt.Sprintf("%dx %s x %d nodes", gpusPerNode, gpuType, nodes)
+	return fmt.Sprintf("%d nodes of %dx %s", nodes, gpusPerNode, gpuType)
+}
+
+// gpusPerMachine are the GPU counts a machine comes with; a cluster is bought by the machine.
+var gpusPerMachine = []int{1, 2, 4, 8}
+
+// checkGPUsPerMachine refuses a count no machine comes with; 0 means any.
+func checkGPUsPerMachine(n int) error {
+	if n == 0 {
+		return nil
+	}
+	for _, allowed := range gpusPerMachine {
+		if n == allowed {
+			return nil
+		}
+	}
+	return fmt.Errorf("machines come with 1, 2, 4 or 8 GPUs, not %d; leave the count out to see every size", n)
 }
 
 // sinceISO is the time from an ISO instant to now, or "-".
@@ -41,7 +57,7 @@ func sinceISO(iso string, now time.Time) string {
 
 func renderClusterTable(w io.Writer, list []api.Cluster, now time.Time) error {
 	tw := newTableTo(w)
-	fmt.Fprintf(tw, "ID\tNAME\tSTATUS\tGPUS\tINTERCONNECT\tSOFTWARE\t$/HR\tAGE\n")
+	fmt.Fprintf(tw, "ID\tNAME\tSTATUS\tMACHINES\tINTERCONNECT\tSOFTWARE\t$/HR\tAGE\n")
 	for _, c := range list {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t$%.2f\t%s\n",
 			c.ID, truncate(c.Name, 24), statusColor(c.Status), clusterShape(c.GPUsPerNode, c.GPUType, c.NodeCount),
@@ -50,9 +66,17 @@ func renderClusterTable(w io.Writer, list []api.Cluster, now time.Time) error {
 	return tw.Flush()
 }
 
-// nodesText is the node range of an offer, and how many can start now when known.
+// nodesText is how many machines an offer can be created with (its range, or
+// the only counts it takes), and how many can start now when known.
 func nodesText(o *api.ClusterOffer) string {
 	text := fmt.Sprintf("%d-%d", o.MinNodes, o.MaxNodes)
+	if len(o.AllowedNodeCounts) > 0 {
+		counts := make([]string, len(o.AllowedNodeCounts))
+		for i, n := range o.AllowedNodeCounts {
+			counts[i] = fmt.Sprint(n)
+		}
+		text = strings.Join(counts, ", ")
+	}
 	if o.NodesAvailable != nil {
 		text += fmt.Sprintf(" (%d free)", *o.NodesAvailable)
 	}
@@ -61,7 +85,7 @@ func nodesText(o *api.ClusterOffer) string {
 
 func renderOfferTable(w io.Writer, offers []api.ClusterOffer) error {
 	tw := newTableTo(w)
-	fmt.Fprintf(tw, "OFFER\tGPUS/NODE\tLOCATION\tINTERCONNECT\tKIND\tNODES\tSOFTWARE\t$/HR/NODE\t$/HR\n")
+	fmt.Fprintf(tw, "OFFER\tGPUS/MACHINE\tLOCATION\tINTERCONNECT\tKIND\tMACHINES\tSOFTWARE\t$/HR/MACHINE\t$/HR\n")
 	for i := range offers {
 		o := &offers[i]
 		kind := o.DeploymentType
@@ -72,11 +96,23 @@ func renderOfferTable(w io.Writer, offers []api.ClusterOffer) error {
 		for _, s := range o.Stacks {
 			software = append(software, stackName(s))
 		}
-		fmt.Fprintf(tw, "%s\t%dx %s\t%s\t%s\t%s\t%s\t%s\t$%.2f\t$%.2f (%d nodes)\n",
+		fmt.Fprintf(tw, "%s\t%dx %s\t%s\t%s\t%s\t%s\t%s\t$%.2f\t$%.2f (%d machines)\n",
 			o.OfferID, o.GPUsPerNode, o.GPUType, o.Location, o.Interconnect.Label, kind, nodesText(o),
 			strings.Join(software, ", "), o.HourlyRatePerNode, o.HourlyRate, o.NodeCount)
 	}
-	return tw.Flush()
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	// What each kind of link is good for, once per distinct note.
+	seen := map[string]bool{}
+	for i := range offers {
+		ic := offers[i].Interconnect
+		if ic.Note != "" && !seen[ic.Note] {
+			seen[ic.Note] = true
+			fmt.Fprintf(w, "\n%s: %s\n", ic.Label, ic.Note)
+		}
+	}
+	return nil
 }
 
 func orDash(s *string) string {
@@ -102,6 +138,9 @@ func renderTestResult(w io.Writer, t *api.ClusterTest) error {
 	r := t.Result
 	fmt.Fprintf(w, "NCCL all-reduce test %s across %d GPUs on %d nodes: peak bus bandwidth %.1f GB/s.\n",
 		t.Status, r.GPUs, r.Nodes, r.PeakBusbwGBs)
+	if r.Note != "" {
+		fmt.Fprintln(w, r.Note)
+	}
 	tw := newTableTo(w)
 	fmt.Fprintf(tw, "SIZE\tTIME (us)\tALGBW (GB/s)\tBUSBW (GB/s)\n")
 	for _, s := range r.Sizes {
@@ -125,14 +164,17 @@ func printClusterDetails(w io.Writer, d *api.ClusterDetail, now time.Time) error
 	if d.StackDetail != nil && *d.StackDetail != "" {
 		fmt.Fprintf(w, "  Install:       %s\n", *d.StackDetail)
 	}
-	fmt.Fprintf(w, "  GPUs:          %s\n", clusterShape(d.GPUsPerNode, d.GPUType, d.NodeCount))
+	fmt.Fprintf(w, "  Machines:      %s\n", clusterShape(d.GPUsPerNode, d.GPUType, d.NodeCount))
 	fmt.Fprintf(w, "  Location:      %s\n", d.Location)
 	fmt.Fprintf(w, "  Interconnect:  %s\n", d.Interconnect.Label)
-	fmt.Fprintf(w, "  Price:         $%.2f/hr for the cluster ($%.2f/hr per node)\n", d.HourlyRate, d.HourlyRatePerNode)
+	if d.Interconnect.Note != "" {
+		fmt.Fprintf(w, "                 %s\n", d.Interconnect.Note)
+	}
+	fmt.Fprintf(w, "  Price:         $%.2f/hr for the cluster ($%.2f/hr per machine)\n", d.HourlyRate, d.HourlyRatePerNode)
 	if d.Billing.BilledSince != nil {
-		fmt.Fprintf(w, "  Billed since:  %s (%s, %d nodes)\n", *d.Billing.BilledSince, sinceISO(*d.Billing.BilledSince, now), d.Billing.NodesBilled)
+		fmt.Fprintf(w, "  Billed since:  %s (%s, %d machines)\n", *d.Billing.BilledSince, sinceISO(*d.Billing.BilledSince, now), d.Billing.NodesBilled)
 	} else if d.Status == "provisioning" {
-		fmt.Fprintf(w, "  Billed since:  not yet: billing starts when every node is up\n")
+		fmt.Fprintf(w, "  Billed since:  not yet: billing starts when every machine is up\n")
 	}
 	switch {
 	case !d.Shared.Available:
@@ -252,12 +294,26 @@ func clusterNode(d *api.ClusterDetail, rank int) (*api.ClusterNode, error) {
 	return nil, fmt.Errorf("%s has no node %d (ranks 0 to %d)", d.Name, rank, len(d.Nodes)-1)
 }
 
+// headOverlayAddress is the head's address on the cluster's private network.
+func headOverlayAddress(d *api.ClusterDetail) string {
+	for _, n := range d.Nodes {
+		if n.Rank == 0 && n.OverlayAddress != nil && *n.OverlayAddress != "" {
+			return *n.OverlayAddress
+		}
+	}
+	if addr := d.Connection.Env["MASTER_ADDR"]; addr != "" {
+		return addr
+	}
+	return "10.77.0.1"
+}
+
 // tunnelForwards are the ssh -L forwards from this computer to the head for a
-// stack: the Kubernetes API on 6443 and the Ray dashboard on 8265.
-func tunnelForwards(stack string) ([]string, string, error) {
+// stack: the Kubernetes API on 6443, which listens on the head's private
+// address (headAddress), and the Ray dashboard on 8265, on the head's loopback.
+func tunnelForwards(stack, headAddress string) ([]string, string, error) {
 	switch stack {
 	case "kubernetes":
-		return []string{"-L", "6443:127.0.0.1:6443"}, "the Kubernetes API on https://127.0.0.1:6443", nil
+		return []string{"-L", "6443:" + headAddress + ":6443"}, "the Kubernetes API on https://127.0.0.1:6443", nil
 	case "ray":
 		return []string{"-L", "8265:127.0.0.1:8265"}, "the Ray dashboard on http://127.0.0.1:8265", nil
 	}
@@ -271,13 +327,15 @@ var clustersCmd = &cobra.Command{
 	Aliases: []string{"cluster"},
 	Short:   "Create and use multi-node GPU clusters with Slurm, Kubernetes or Ray",
 	Long: `A cluster is several GPU machines on one private network, with SSH between
-them, /shared on every node, and optionally Slurm, Kubernetes or Ray.
+them, /shared on every node, and optionally Slurm, Kubernetes or Ray. It is
+bought by the machine: each machine has 1, 2, 4 or 8 GPUs, and the price is per
+hour for the whole cluster, with the price per machine under it.
 
-It is all or nothing: every node starts or none does, and a cluster that
-could not start costs nothing. Billing starts when every node is up and runs
-until you delete the cluster, which stops every node together.
+It is all or nothing: every machine starts or none does, and a cluster that
+could not start costs nothing. Billing starts when every machine is up and runs
+until you delete the cluster, which stops every machine together.
 
-  runcrate clusters offers --gpu H100:8 --nodes 4
+  runcrate clusters offers --gpu H100 --nodes 4
   runcrate clusters create --name train --offer <offer> --nodes 4 --stack slurm
   runcrate clusters get train
   runcrate clusters ssh train -- sinfo
@@ -318,7 +376,7 @@ var clustersListCmd = &cobra.Command{
 
 var clustersOffersCmd = &cobra.Command{
 	Use:   "offers",
-	Short: "Where a cluster can be created now, with its price per hour",
+	Short: "The machines a cluster can be created on now, priced per machine and for the cluster",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := loadClient()
 		if err != nil {
@@ -330,7 +388,11 @@ var clustersOffersCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if err := checkGPUsPerMachine(perNode); err != nil {
+			return err
+		}
 		f := api.ClusterOfferFilters{GPUType: gpuType, GPUsPerNode: perNode}
+		f.Volume, _ = cmd.Flags().GetBool("with-volume")
 		f.Nodes, _ = cmd.Flags().GetInt("nodes")
 		f.Region, _ = cmd.Flags().GetString("region")
 		f.Stack, _ = cmd.Flags().GetString("stack")
@@ -344,7 +406,7 @@ var clustersOffersCmd = &cobra.Command{
 			return printJSON(offers)
 		}
 		if len(offers) == 0 {
-			fmt.Println("No cluster offers match right now. Try another GPU, fewer nodes, or any region.")
+			fmt.Println("No machines for this cluster right now. Try another GPU, fewer machines, any GPU count, or any region.")
 			return nil
 		}
 		if err := renderOfferTable(os.Stdout, offers); err != nil {
@@ -357,7 +419,7 @@ var clustersOffersCmd = &cobra.Command{
 
 var clustersCreateCmd = &cobra.Command{
 	Use:   "create",
-	Short: "Create a cluster from an offer (all or nothing; billed from when every node is up)",
+	Short: "Create a cluster from an offer (all or nothing; billed from when every machine is up)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := loadClient()
 		if err != nil {
@@ -402,7 +464,8 @@ var clustersCreateCmd = &cobra.Command{
 		}
 		fmt.Printf("Creating cluster %s (%s): %s, %s, %s.\n", d.Name, d.ID,
 			clusterShape(d.GPUsPerNode, d.GPUType, d.NodeCount), d.Location, stackName(d.Stack))
-		fmt.Printf("Every node starts or none does. Billing starts when every node is up, at $%.2f/hr for the cluster.\n", d.HourlyRate)
+		fmt.Printf("Every machine starts or none does. Billing starts when every machine is up, at $%.2f/hr for the cluster ($%.2f/hr per machine).\n",
+			d.HourlyRate, d.HourlyRatePerNode)
 		fmt.Printf("Follow it with: runcrate clusters get %s\n", d.Name)
 		return nil
 	},
@@ -432,7 +495,7 @@ var clustersGetCmd = &cobra.Command{
 var clustersDeleteCmd = &cobra.Command{
 	Use:     "delete <name-or-id>",
 	Aliases: []string{"rm", "terminate"},
-	Short:   "Terminate every node of a cluster and stop its billing",
+	Short:   "Terminate every machine of a cluster and stop its billing",
 	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := loadClient()
@@ -445,7 +508,7 @@ var clustersDeleteCmd = &cobra.Command{
 		}
 		if yes, _ := cmd.Flags().GetBool("yes"); !yes {
 			ok, err := confirm(os.Stdin, os.Stderr, fmt.Sprintf(
-				"Terminate cluster %s and all %d nodes? Files on the nodes and in /shared are deleted (a volume keeps /shared/volume). [y/N] ",
+				"Terminate cluster %s and all %d machines? Files on the machines and in /shared are deleted (a volume keeps /shared/volume). [y/N] ",
 				d.Name, d.NodeCount))
 			if err != nil {
 				return errors.New("no answer to the prompt; pass --yes to terminate without asking")
@@ -462,7 +525,7 @@ var clustersDeleteCmd = &cobra.Command{
 		if jsonOutput {
 			return printJSON(res)
 		}
-		fmt.Printf("Terminating cluster %s: every node stops and billing ends.\n", d.Name)
+		fmt.Printf("Terminating cluster %s: every machine stops and billing ends.\n", d.Name)
 		return nil
 	},
 }
@@ -547,7 +610,7 @@ var clustersTunnelCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("fetching cluster: %w", err)
 		}
-		forwards, what, err := tunnelForwards(d.Stack)
+		forwards, what, err := tunnelForwards(d.Stack, headOverlayAddress(d))
 		if err != nil {
 			return err
 		}
@@ -621,19 +684,20 @@ func init() {
 	clustersListCmd.Flags().Bool("all", false, "Include terminated and failed clusters")
 	clustersListCmd.Flags().BoolP("quiet", "q", false, "Only show cluster IDs")
 
-	clustersOffersCmd.Flags().String("gpu", "", "GPU type, optionally with GPUs per node (e.g. H100 or H100:8)")
-	clustersOffersCmd.Flags().Int("gpu-count", 0, "GPUs on each node")
-	clustersOffersCmd.Flags().Int("nodes", 2, "Number of nodes the price is for (2 to 64)")
+	clustersOffersCmd.Flags().String("gpu", "", "GPU type, optionally with GPUs per machine (e.g. H100 or H100:8)")
+	clustersOffersCmd.Flags().Int("gpu-count", 0, "GPUs on each machine: 1, 2, 4 or 8 (default: every size)")
+	clustersOffersCmd.Flags().Int("nodes", 2, "Number of machines the price is for (2 to 64)")
 	clustersOffersCmd.Flags().String("region", "", "Only offers in this region, city or country")
 	clustersOffersCmd.Flags().String("stack", "", "Only offers that can run none, slurm, kubernetes or ray")
 	clustersOffersCmd.Flags().Bool("include-community", false, "Also show community hosts (datacenter only by default)")
+	clustersOffersCmd.Flags().Bool("with-volume", false, "Only machines that may hold a volume (for create --volume)")
 
-	clustersCreateCmd.Flags().String("name", "", "Cluster name; nodes are named <name>-<rank> (required)")
+	clustersCreateCmd.Flags().String("name", "", "Cluster name: letters, digits and hyphens; machines are named <name>-<rank> (required)")
 	clustersCreateCmd.Flags().String("offer", "", "Offer ID from 'runcrate clusters offers' (required)")
-	clustersCreateCmd.Flags().Int("nodes", 0, "Number of nodes, 2 to 64, within the offer's range (required)")
+	clustersCreateCmd.Flags().Int("nodes", 0, "Number of machines, 2 to 64, within the offer's range (required)")
 	clustersCreateCmd.Flags().String("stack", "none", "Software across the nodes: none, slurm, kubernetes or ray")
-	clustersCreateCmd.Flags().StringSlice("ssh-key", nil, "SSH key ID from 'runcrate ssh-keys list' to add on every node (repeatable)")
-	clustersCreateCmd.Flags().String("volume", "", "Volume ID synced into /shared/volume on the head")
+	clustersCreateCmd.Flags().StringSlice("ssh-key", nil, "SSH key ID from 'runcrate ssh-keys list' to add on every machine (repeatable)")
+	clustersCreateCmd.Flags().String("volume", "", "Volume ID synced into /shared/volume on the head (list offers with --with-volume)")
 	clustersCreateCmd.Flags().Bool("include-community", false, "Needed when the offer is on community hosts")
 	for _, name := range []string{"name", "offer", "nodes"} {
 		_ = clustersCreateCmd.MarkFlagRequired(name)

@@ -82,7 +82,7 @@ func TestListClusterOffersSendsOnlyTheFiltersGiven(t *testing.T) {
 	defer server.Close()
 	client := NewClient("rc_live_test", server.URL)
 
-	offers, err := client.ListClusterOffers(ClusterOfferFilters{GPUType: "H100", GPUsPerNode: 8, Nodes: 4, IncludeCommunity: true})
+	offers, err := client.ListClusterOffers(ClusterOfferFilters{GPUType: "H100", GPUsPerNode: 8, Nodes: 4, IncludeCommunity: true, Volume: true})
 	if err != nil || len(offers) != 1 || offers[0].Interconnect.Kind != "ethernet" {
 		t.Fatalf("offers = %+v, err = %v", offers, err)
 	}
@@ -90,7 +90,7 @@ func TestListClusterOffersSendsOnlyTheFiltersGiven(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"/api/v1/clusters/offers?gpu_type=H100&gpus_per_node=8&include_community=true&nodes=4",
+		"/api/v1/clusters/offers?gpu_type=H100&gpus_per_node=8&include_community=true&nodes=4&volume=true",
 		"/api/v1/clusters/offers?",
 	}
 	if len(queries) != 2 || queries[0] != want[0] || queries[1] != want[1] {

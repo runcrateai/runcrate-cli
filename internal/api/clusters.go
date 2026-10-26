@@ -9,14 +9,16 @@ import (
 	"strconv"
 )
 
-// ClusterInterconnect is how a cluster's nodes talk to each other.
+// ClusterInterconnect is how a cluster's machines talk to each other. Note says
+// what the link is good for when it is not a training fabric (every ethernet one).
 type ClusterInterconnect struct {
 	Kind     string   `json:"kind"` // infiniband, roce or ethernet
 	RateGbps *float64 `json:"rate_gbps,omitempty"`
 	Label    string   `json:"label"`
+	Note     string   `json:"note,omitempty"`
 }
 
-// ClusterNodeSpec is one node of an offer.
+// ClusterNodeSpec is one machine of an offer.
 type ClusterNodeSpec struct {
 	VCPUs     int      `json:"vcpus"`
 	MemoryGB  float64  `json:"memory_gb"`
@@ -24,8 +26,10 @@ type ClusterNodeSpec struct {
 	VRAMGB    *float64 `json:"vram_gb,omitempty"`
 }
 
-// ClusterOffer is somewhere a cluster of a shape can be created now, from
-// GET /api/v1/clusters/offers. HourlyRate is for the whole cluster at NodeCount.
+// ClusterOffer is one kind of machine a cluster can be created on now, from
+// GET /api/v1/clusters/offers. A cluster is bought by the machine:
+// HourlyRatePerNode is one machine, HourlyRate the whole cluster at NodeCount.
+// When AllowedNodeCounts is set, only those numbers of machines can be created.
 type ClusterOffer struct {
 	OfferID           string              `json:"offer_id"`
 	GPUType           string              `json:"gpu_type"`
@@ -33,10 +37,12 @@ type ClusterOffer struct {
 	NodeCount         int                 `json:"node_count"`
 	MinNodes          int                 `json:"min_nodes"`
 	MaxNodes          int                 `json:"max_nodes"`
+	AllowedNodeCounts []int               `json:"allowed_node_counts,omitempty"`
 	NodesAvailable    *int                `json:"nodes_available"`
 	DeploymentType    string              `json:"deployment_type"`
 	HostTier          string              `json:"host_tier"`
 	Location          string              `json:"location"`
+	CountryCode       string              `json:"country_code,omitempty"`
 	Interconnect      ClusterInterconnect `json:"interconnect"`
 	HourlyRatePerNode float64             `json:"hourly_rate_per_node"`
 	HourlyRate        float64             `json:"hourly_rate"`
@@ -47,6 +53,7 @@ type ClusterOffer struct {
 }
 
 // ClusterOfferFilters are the query of GET /api/v1/clusters/offers; zero values are not sent.
+// Volume lists only machines that may hold a volume (for a create with one).
 type ClusterOfferFilters struct {
 	GPUType          string
 	GPUsPerNode      int
@@ -54,6 +61,7 @@ type ClusterOfferFilters struct {
 	Region           string
 	Stack            string
 	IncludeCommunity bool
+	Volume           bool
 }
 
 // CreateClusterRequest is the body of POST /api/v1/clusters.
@@ -81,6 +89,7 @@ type Cluster struct {
 	DeploymentType    string              `json:"deployment_type"`
 	HostTier          string              `json:"host_tier"`
 	Location          string              `json:"location"`
+	CountryCode       string              `json:"country_code,omitempty"`
 	Interconnect      ClusterInterconnect `json:"interconnect"`
 	HourlyRatePerNode float64             `json:"hourly_rate_per_node"`
 	HourlyRate        float64             `json:"hourly_rate"`
@@ -130,6 +139,7 @@ type ClusterShared struct {
 
 // ClusterEvent is one line of a cluster's history.
 type ClusterEvent struct {
+	ID      int    `json:"id"`
 	At      string `json:"at"`
 	Kind    string `json:"kind"`
 	Rank    *int   `json:"rank"`
@@ -161,6 +171,7 @@ type ClusterTestResult struct {
 	Nodes        int        `json:"nodes"`
 	GPUs         int        `json:"gpus"`
 	Error        string     `json:"error,omitempty"`
+	Note         string     `json:"note,omitempty"` // why it stopped early on a slow link
 }
 
 // ClusterDetail is GET /api/v1/clusters/{id}.
@@ -175,6 +186,7 @@ type ClusterDetail struct {
 		BilledSince *string `json:"billed_since"`
 		NodesBilled int     `json:"nodes_billed"`
 	} `json:"billing"`
+	Resize bool `json:"resize"` // workers can be added and removed
 }
 
 // Kubeconfig is a Kubernetes cluster's kubeconfig and the SSH tunnel it needs:
@@ -218,6 +230,9 @@ func (c *Client) ListClusterOffers(f ClusterOfferFilters) ([]ClusterOffer, error
 	}
 	if f.IncludeCommunity {
 		q.Set("include_community", "true")
+	}
+	if f.Volume {
+		q.Set("volume", "true")
 	}
 	path := "/api/v1/clusters/offers"
 	if len(q) > 0 {
