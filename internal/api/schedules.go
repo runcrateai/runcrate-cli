@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -114,6 +115,11 @@ func schedulePath(id string) string {
 
 // callJSON sends body (nil for none) as JSON and decodes the { data: T } reply.
 func callJSON[T any](c *Client, method, path string, body any) (*T, error) {
+	return callJSONHeaders[T](c, method, path, body, nil)
+}
+
+// callJSONHeaders is callJSON with extra request headers (an Idempotency-Key).
+func callJSONHeaders[T any](c *Client, method, path string, body any, headers map[string]string) (*T, error) {
 	var reader io.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)
@@ -123,7 +129,7 @@ func callJSON[T any](c *Client, method, path string, body any) (*T, error) {
 		reader = bytes.NewReader(raw)
 	}
 
-	resp, err := c.do(method, path, reader)
+	resp, err := c.doCtxHeaders(context.Background(), method, path, reader, headers)
 	if err != nil {
 		return nil, fmt.Errorf("network error: %w", err)
 	}
