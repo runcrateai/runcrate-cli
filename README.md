@@ -180,6 +180,33 @@ runcrate envs switch staging && runcrate secrets list
 A value passed for one launch (`runcrate run --env HF_TOKEN=...`) wins over the
 secret of the same name.
 
+## Billing
+
+An agent or a script can see how long the balance lasts and top it up from the
+workspace's default card. Charging needs the billing permission on your API key
+or sign-in, turned on by a workspace owner or manager on the dashboard API keys
+page (with daily and monthly caps). Cards are added in the dashboard
+(https://runcrate.ai/dashboard/billing), never from the CLI.
+
+```bash
+runcrate billing balance [--json]                 # credits, burn per hour, runway
+runcrate billing usage [--period 7d]              # inference usage
+runcrate billing topup 50                         # asks first; --yes to skip, --json for scripts
+runcrate billing topup 50 --idempotency-key <key> --yes   # check an earlier top-up, never charges twice
+runcrate billing auto-recharge                    # on or off, threshold, target, last failure
+runcrate billing auto-recharge set --threshold 20 --target 100
+runcrate billing auto-recharge off                # keeps the amounts
+runcrate billing payment-methods                  # brand, last 4 digits, expiry, default
+```
+
+- Every top-up has an idempotency key, a new one unless you pass
+  `--idempotency-key`, and the CLI prints it. Sending the same key again
+  answers that top-up's current status instead of charging again.
+- `requires_action` means the bank wants the payment confirmed: a workspace
+  owner or manager opens the printed link, signed in. Nothing is charged until
+  then. `processing` settles on its own; check it with the same key.
+- A declined top-up prints why and exits non-zero.
+
 ## AI clients (MCP)
 
 Runcrate runs a remote MCP server at `https://mcp.runcrate.ai/mcp`. The quickest
