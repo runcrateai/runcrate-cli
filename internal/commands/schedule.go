@@ -144,7 +144,7 @@ func resolveTimezone(name string) (*time.Location, error) {
 
 // Flags that only one kind takes.
 var (
-	instanceOnlyScheduleFlags = []string{"type-id", "idle-stop", "volume-mode"}
+	instanceOnlyScheduleFlags = []string{"type-id", "idle-stop"}
 	jobOnlyScheduleFlags      = []string{"image", "env"}
 )
 
