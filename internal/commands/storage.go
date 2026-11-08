@@ -38,11 +38,13 @@ var storageListCmd = &cobra.Command{
 			return nil
 		}
 
+		// A volume's region is an id; show the name `volumes regions` gives it. A failed lookup shows the id.
+		regions, _ := client.ListStorageRegions()
+
 		w := newTable()
-		fmt.Fprintf(w, "NAME\tSIZE\tREGION\tSTATUS\t$/HR\n")
+		fmt.Fprintf(w, "NAME\tSIZE\tREGION\tSTATUS\n")
 		for _, v := range volumes {
-			fmt.Fprintf(w, "%s\t%d GB\t%s\t%s\t$%.4f\n",
-				v.Name, v.SizeGB, v.Region, v.Status, v.CostPerHr)
+			fmt.Fprintf(w, "%s\t%d GB\t%s\t%s\n", v.Name, v.SizeGB, regionLabel(regions, v.Region), v.Status)
 		}
 		return w.Flush()
 	},
@@ -52,11 +54,6 @@ var storageCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a storage volume",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := loadClient()
-		if err != nil {
-			return err
-		}
-
 		name, _ := cmd.Flags().GetString("name")
 		size, _ := cmd.Flags().GetInt("size")
 		region, _ := cmd.Flags().GetString("region")
@@ -66,6 +63,14 @@ var storageCreateCmd = &cobra.Command{
 		}
 		if size <= 0 {
 			return fmt.Errorf("--size is required (in GB)")
+		}
+		if region == "" {
+			return fmt.Errorf("--region is required: an id or name from 'runcrate volumes regions'")
+		}
+
+		client, err := loadClient()
+		if err != nil {
+			return err
 		}
 
 		vol, err := client.CreateStorage(api.CreateStorageRequest{
@@ -78,10 +83,21 @@ var storageCreateCmd = &cobra.Command{
 		}
 
 		dim := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-		fmt.Printf("\n  Created %s %s\n\n", vol.Name, dim.Render(fmt.Sprintf("(%d GB, %s)", vol.SizeGB, vol.Region)))
+		fmt.Printf("\n  Created %s %s\n\n", vol.Name, dim.Render(fmt.Sprintf("(%d GB, %s)", vol.SizeGB, region)))
 
 		return nil
 	},
+}
+
+// regionLabel names a volume's region: its id is the id of a row of `volumes regions`, whose name is
+// what to show. Anything else (a volume made long ago holds a region name) is shown as it is.
+func regionLabel(regions []api.StorageRegion, region string) string {
+	for _, r := range regions {
+		if r.ID == region {
+			return r.Name
+		}
+	}
+	return region
 }
 
 var storageDeleteCmd = &cobra.Command{
@@ -160,7 +176,7 @@ func init() {
 	storageCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output as JSON")
 	storageCreateCmd.Flags().String("name", "", "Volume name (required)")
 	storageCreateCmd.Flags().Int("size", 0, "Size in GB (required)")
-	storageCreateCmd.Flags().String("region", "", "Region")
+	storageCreateCmd.Flags().String("region", "", "Region id or name from 'runcrate volumes regions' (required)")
 	storageResizeCmd.Flags().Int("size", 0, "New size in GB (required)")
 
 	storageCmd.AddCommand(storageListCmd)
