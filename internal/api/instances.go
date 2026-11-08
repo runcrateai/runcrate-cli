@@ -55,16 +55,19 @@ type InstanceStatus struct {
 
 // CreateInstanceRequest is the payload for creating an instance.
 type CreateInstanceRequest struct {
-	Name           string   `json:"name"`
-	GPUType        string   `json:"gpu_type,omitempty"`
-	GPUCount       int      `json:"gpu_count,omitempty"`
-	Region         string   `json:"region,omitempty"`
-	SSHKeyID       string   `json:"ssh_key_id,omitempty"`
-	Template       string   `json:"template,omitempty"`
-	InstanceTypeID string   `json:"instance_type_id,omitempty"`
-	StorageID      string   `json:"storage_id,omitempty"`
-	EnvVars        []EnvVar `json:"env_vars,omitempty"`
-	StartupCmds    []string `json:"startup_commands,omitempty"`
+	Name           string `json:"name"`
+	GPUType        string `json:"gpu_type,omitempty"`
+	GPUCount       int    `json:"gpu_count,omitempty"`
+	Region         string `json:"region,omitempty"`
+	SSHKeyID       string `json:"ssh_key_id,omitempty"`
+	Template       string `json:"template,omitempty"`
+	InstanceTypeID string `json:"instance_type_id,omitempty"`
+	StorageID      string `json:"storage_id,omitempty"`
+	// VolumeMode is how the volume reaches the machine, with StorageID: "copy" or "mount_ro". Omitted
+	// when empty, which the API reads as "copy".
+	VolumeMode  string   `json:"volume_mode,omitempty"`
+	EnvVars     []EnvVar `json:"env_vars,omitempty"`
+	StartupCmds []string `json:"startup_commands,omitempty"`
 
 	// Optional auto stop guardrails, in whole minutes. Omitted when nil.
 	MaxRuntimeMinutes   *int `json:"max_runtime_minutes,omitempty"`

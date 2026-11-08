@@ -241,12 +241,45 @@ var instancesTypesCmd = &cobra.Command{
 // shared by instances create and schedule create.
 func addInstanceOnlyFlags(cmd *cobra.Command) {
 	cmd.Flags().String("type-id", "", "Instance type ID from 'runcrate instances types'")
+	cmd.Flags().String("volume-mode", "",
+		"How --volume reaches the instance: copy (the volume is copied to the machine's disk at boot and changes are copied back, the default) or mount_ro (the volume is mounted read-only at /workspace, ready in seconds)")
 	cmd.Flags().String("idle-stop", "",
 		"Stop the instance after this long with GPU use under 5% and nobody connected (SSH, web terminal or editor), 5m to 24h (e.g. 30m), GPU instances only. Recommended for unattended work")
 }
 
+// volumeModes are the values --volume-mode accepts, as the API spells them.
+var volumeModes = []string{"copy", "mount_ro"}
+
+// parseVolumeModeFlag checks --volume-mode before any network call: one of volumeModes in any case,
+// and only beside --volume. An empty value is the flag left out, so the body carries no volume_mode.
+func parseVolumeModeFlag(value, volumeID string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	mode := strings.ToLower(strings.TrimSpace(value))
+	valid := false
+	for _, m := range volumeModes {
+		valid = valid || mode == m
+	}
+	if !valid {
+		return "", fmt.Errorf("invalid --volume-mode %q: use %s", value, strings.Join(volumeModes, " or "))
+	}
+	if volumeID == "" {
+		return "", fmt.Errorf("--volume-mode needs --volume")
+	}
+	return mode, nil
+}
+
+// volumeLine is the Volume line of the create output: the mode is named only when the user chose one.
+func volumeLine(volumeID, volumeMode string) string {
+	if volumeMode == "" {
+		return fmt.Sprintf("  Volume:      %s, at /workspace", volumeID)
+	}
+	return fmt.Sprintf("  Volume:      %s, at /workspace (%s)", volumeID, volumeMode)
+}
+
 // buildInstanceRequest turns the create flags (name, gpu, gpu-count, region,
-// template, type-id, volume, max-runtime, idle-stop) into the create body.
+// template, type-id, volume, volume-mode, max-runtime, idle-stop) into the create body.
 func buildInstanceRequest(cmd *cobra.Command) (api.CreateInstanceRequest, error) {
 	var req api.CreateInstanceRequest
 	name, _ := cmd.Flags().GetString("name")
@@ -256,6 +289,7 @@ func buildInstanceRequest(cmd *cobra.Command) (api.CreateInstanceRequest, error)
 	template, _ := cmd.Flags().GetString("template")
 	typeID, _ := cmd.Flags().GetString("type-id")
 	volumeID, _ := cmd.Flags().GetString("volume")
+	volumeModeRaw, _ := cmd.Flags().GetString("volume-mode")
 	maxRuntimeRaw, _ := cmd.Flags().GetString("max-runtime")
 	idleStopRaw, _ := cmd.Flags().GetString("idle-stop")
 
@@ -264,6 +298,11 @@ func buildInstanceRequest(cmd *cobra.Command) (api.CreateInstanceRequest, error)
 		return req, err
 	}
 	idleStop, err := parseMinutesFlag("idle-stop", idleStopRaw, idleStopMaxMinutes)
+	if err != nil {
+		return req, err
+	}
+
+	volumeMode, err := parseVolumeModeFlag(volumeModeRaw, volumeID)
 	if err != nil {
 		return req, err
 	}
@@ -297,6 +336,7 @@ func buildInstanceRequest(cmd *cobra.Command) (api.CreateInstanceRequest, error)
 		MaxRuntimeMinutes:   maxRuntime,
 		IdleShutdownMinutes: idleStop,
 		StorageID:           volumeID,
+		VolumeMode:          volumeMode,
 	}, nil
 }
 
@@ -307,8 +347,13 @@ var instancesCreateCmd = &cobra.Command{
 
 For unattended or agent-run work, set --max-runtime and --idle-stop so the instance
 does not keep billing after the job ends. Auto stop terminates the instance, so keep
-anything you need on a storage volume.`,
-	Example: "  runcrate instances create --name train --gpu H100 --max-runtime 4h --idle-stop 30m",
+anything you need on a storage volume.
+
+With --volume, --volume-mode mount_ro mounts the volume read-only at /workspace, ready in
+seconds, instead of copying it to the machine's disk; write outputs to /root/workspace
+(not saved). A machine or volume that cannot mount is refused, never copied instead.`,
+	Example: `  runcrate instances create --name train --gpu H100 --max-runtime 4h --idle-stop 30m
+  runcrate instances create --name infer --gpu H100 --volume <volume-id> --volume-mode mount_ro`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		req, err := buildInstanceRequest(cmd)
 		if err != nil {
@@ -353,7 +398,7 @@ anything you need on a storage volume.`,
 		fmt.Printf("  Max runtime: %s\n", formatOptionalMinutes(instance.MaxRuntimeMinutes))
 		fmt.Printf("  Idle stop:   %s\n", formatOptionalMinutes(instance.IdleShutdownMinutes))
 		if volumeID != "" {
-			fmt.Printf("  Volume:      %s, at /workspace\n", volumeID)
+			fmt.Println(volumeLine(volumeID, req.VolumeMode))
 		}
 		fmt.Println()
 		fmt.Println("  Provisioning in the background. Track with:")
