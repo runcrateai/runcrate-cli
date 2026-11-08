@@ -51,18 +51,6 @@ runcrate instances info train   # Max runtime, Idle stop, Auto stop at, Stop rea
 runcrate instances auto-stop train --max-runtime 8h --idle-stop off
 ```
 
-`--volume <volume-id>` attaches a volume at `/workspace`. By default it is copied to the
-machine's disk at boot and your changes are copied back (`--volume-mode copy`). With
-`--volume-mode mount_ro` the volume is mounted read-only at `/workspace` and ready in
-seconds, nothing is copied, and what you write goes to `/root/workspace`, which is not
-saved. A machine or volume that cannot mount is refused with `VOLUME_MODE_UNSUPPORTED`;
-it is never quietly turned into a copy. `--volume-mode` needs `--volume`, and
-`schedule create` takes it for an instance schedule too (jobs always copy).
-
-```bash
-runcrate instances create --name infer --gpu H100 --volume <volume-id> --volume-mode mount_ro
-```
-
 Point the CLI at a different API origin with `runcrate config set url <url>` or the
 `RUNCRATE_API_URL` env var (defaults to `https://runcrate.ai`).
 

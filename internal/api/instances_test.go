@@ -229,35 +229,6 @@ func TestCreateInstanceSendsVolumeAsStorageID(t *testing.T) {
 	}
 }
 
-// volume_mode goes in the body only when set: an empty one leaves the API to its default, copy.
-func TestCreateInstanceSendsVolumeMode(t *testing.T) {
-	var bodies []map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]any
-		json.NewDecoder(r.Body).Decode(&body)
-		bodies = append(bodies, body)
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]any{"data": Instance{ID: "inst-new"}})
-	}))
-	defer server.Close()
-	client := NewClient("rc_live_test", server.URL)
-
-	for _, req := range []CreateInstanceRequest{
-		{Name: "mounted", GPUType: "H100", StorageID: "vol-1", VolumeMode: "mount_ro"},
-		{Name: "default", GPUType: "H100", StorageID: "vol-1"},
-	} {
-		if _, err := client.CreateInstance(req); err != nil {
-			t.Fatalf("CreateInstance(%s) error: %v", req.Name, err)
-		}
-	}
-	if got := bodies[0]["volume_mode"]; got != "mount_ro" {
-		t.Errorf("volume_mode = %v, want mount_ro", got)
-	}
-	if _, ok := bodies[1]["volume_mode"]; ok {
-		t.Errorf("volume_mode sent without being set: %v", bodies[1])
-	}
-}
-
 func TestDeleteInstance(t *testing.T) {
 	server := mockInstancesServer(t)
 	defer server.Close()
