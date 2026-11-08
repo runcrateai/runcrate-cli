@@ -2,7 +2,12 @@ package commands
 
 import (
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -189,13 +194,15 @@ func TestParseAutoStopFlag(t *testing.T) {
 // resetCreateFlags puts the flags of `instances create` back to their defaults after a test sets some.
 func resetCreateFlags(t *testing.T) {
 	t.Helper()
-	t.Cleanup(func() {
-		for _, name := range []string{"name", "gpu", "gpu-count", "type-id"} {
-			f := instancesCreateCmd.Flags().Lookup(name)
-			f.Value.Set(f.DefValue)
-			f.Changed = false
-		}
-	})
+	t.Cleanup(putCreateFlagsBack)
+}
+
+func putCreateFlagsBack() {
+	for _, name := range []string{"name", "gpu", "gpu-count", "type-id", "volume", "volume-mode"} {
+		f := instancesCreateCmd.Flags().Lookup(name)
+		f.Value.Set(f.DefValue)
+		f.Changed = false
+	}
 }
 
 // --gpu-count defaults to 1, and the server refuses a gpu_count beside a type id that is not the type's
@@ -232,5 +239,141 @@ func TestBuildInstanceRequestGPUCountBesideTypeID(t *testing.T) {
 				t.Errorf("body %s carries gpu_count", body)
 			}
 		})
+	}
+}
+
+// --volume-mode is sent as volume_mode only when the user gave it, in the API's spelling whatever the case.
+func TestBuildInstanceRequestVolumeMode(t *testing.T) {
+	tests := []struct {
+		name     string
+		flags    map[string]string
+		wantMode string
+		wantSent bool
+	}{
+		{"no flag sends no volume_mode", map[string]string{"volume": "vol-1"}, "", false},
+		{"mount_ro", map[string]string{"volume": "vol-1", "volume-mode": "mount_ro"}, "mount_ro", true},
+		{"copy", map[string]string{"volume": "vol-1", "volume-mode": "copy"}, "copy", true},
+		{"any case", map[string]string{"volume": "vol-1", "volume-mode": "Mount_RO"}, "mount_ro", true},
+		{"spaces around it", map[string]string{"volume": "vol-1", "volume-mode": " COPY "}, "copy", true},
+		{"an empty value is no flag", map[string]string{"volume": "vol-1", "volume-mode": ""}, "", false},
+		{"no volume and no flag", map[string]string{}, "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetCreateFlags(t)
+			instancesCreateCmd.Flags().Set("name", "box")
+			instancesCreateCmd.Flags().Set("gpu", "H100")
+			for name, value := range tt.flags {
+				if err := instancesCreateCmd.Flags().Set(name, value); err != nil {
+					t.Fatalf("set --%s: %v", name, err)
+				}
+			}
+			req, err := buildInstanceRequest(instancesCreateCmd)
+			if err != nil {
+				t.Fatalf("buildInstanceRequest: %v", err)
+			}
+			if req.VolumeMode != tt.wantMode {
+				t.Errorf("VolumeMode = %q, want %q", req.VolumeMode, tt.wantMode)
+			}
+			body, _ := json.Marshal(req)
+			var sent map[string]any
+			json.Unmarshal(body, &sent)
+			if got, ok := sent["volume_mode"]; ok != tt.wantSent || (ok && got != tt.wantMode) {
+				t.Errorf("body %s: volume_mode = %v, sent %v, want %q sent %v", body, got, ok, tt.wantMode, tt.wantSent)
+			}
+		})
+	}
+}
+
+func TestBuildInstanceRequestVolumeModeRefusals(t *testing.T) {
+	tests := []struct {
+		name    string
+		flags   map[string]string
+		wantErr string
+	}{
+		{"an unknown mode", map[string]string{"volume": "vol-1", "volume-mode": "rw"}, "copy or mount_ro"},
+		{"a mode nobody knows without a volume", map[string]string{"volume-mode": "rw"}, "copy or mount_ro"},
+		{"a mode without a volume", map[string]string{"volume-mode": "mount_ro"}, "--volume-mode needs --volume"},
+		{"copy without a volume", map[string]string{"volume-mode": "copy"}, "--volume-mode needs --volume"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetCreateFlags(t)
+			instancesCreateCmd.Flags().Set("name", "box")
+			instancesCreateCmd.Flags().Set("gpu", "H100")
+			for name, value := range tt.flags {
+				instancesCreateCmd.Flags().Set(name, value)
+			}
+			_, err := buildInstanceRequest(instancesCreateCmd)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("err = %v, want it to mention %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// A refused --volume-mode never reaches the network: the whole command runs against a server that counts
+// requests, and a good one sends volume_mode in the create body.
+func TestInstancesCreateVolumeModeBeforeAnyCall(t *testing.T) {
+	var calls atomic.Int32
+	var created map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/instances":
+			raw, _ := io.ReadAll(r.Body)
+			json.Unmarshal(raw, &created)
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"data":{"id":"inst-1","name":"box","gpu_type":"H100","gpu_count":1}}`))
+		default:
+			w.Write([]byte(`{"data":[]}`))
+		}
+	}))
+	defer server.Close()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("RUNCRATE_API_KEY", "rc_live_test")
+	t.Setenv("RUNCRATE_API_URL", server.URL)
+
+	t.Cleanup(putCreateFlagsBack)
+	run := func(flags map[string]string) error {
+		putCreateFlagsBack()
+		instancesCreateCmd.Flags().Set("name", "box")
+		instancesCreateCmd.Flags().Set("gpu", "H100")
+		for name, value := range flags {
+			instancesCreateCmd.Flags().Set(name, value)
+		}
+		stdout := os.Stdout
+		devnull, _ := os.Open(os.DevNull)
+		os.Stdout = devnull
+		defer func() { os.Stdout = stdout; devnull.Close() }()
+		return instancesCreateCmd.RunE(instancesCreateCmd, nil)
+	}
+
+	for _, flags := range []map[string]string{
+		{"volume": "vol-1", "volume-mode": "rw"},
+		{"volume-mode": "mount_ro"},
+	} {
+		if err := run(flags); err == nil {
+			t.Errorf("flags %v: expected an error", flags)
+		}
+		if n := calls.Load(); n != 0 {
+			t.Fatalf("flags %v: %d requests were made before the refusal", flags, n)
+		}
+	}
+
+	if err := run(map[string]string{"volume": "vol-1", "volume-mode": "mount_ro"}); err != nil {
+		t.Fatalf("create with mount_ro: %v", err)
+	}
+	if created["storage_id"] != "vol-1" || created["volume_mode"] != "mount_ro" {
+		t.Errorf("create body = %v, want storage_id vol-1 and volume_mode mount_ro", created)
+	}
+}
+
+func TestVolumeLine(t *testing.T) {
+	if got, want := volumeLine("vol-1", ""), "  Volume:      vol-1, at /workspace"; got != want {
+		t.Errorf("without a mode = %q, want %q", got, want)
+	}
+	if got, want := volumeLine("vol-1", "mount_ro"), "  Volume:      vol-1, at /workspace (mount_ro)"; got != want {
+		t.Errorf("with a mode = %q, want %q", got, want)
 	}
 }
