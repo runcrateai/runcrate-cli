@@ -6,15 +6,16 @@ import (
 	"strings"
 )
 
+// StorageVolume is a volume as GET /api/v1/storage answers it (camelCase, the API's StorageVolume):
+// Region is the id of the region it was made in, one of /api/v1/storage/regions (a volume made long
+// ago may hold a region name instead).
 type StorageVolume struct {
-	ID        string  `json:"id"`
-	Name      string  `json:"name"`
-	SizeGB    int     `json:"size_gb"`
-	Region    string  `json:"region"`
-	Status    string  `json:"status"`
-	MountPath string  `json:"mount_path"`
-	CostPerHr float64 `json:"cost_per_hour"`
-	CreatedAt string  `json:"created_at"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	SizeGB    int    `json:"sizeGb"`
+	Region    string `json:"region"`
+	Status    string `json:"status"`
+	CreatedAt string `json:"createdAt"`
 }
 
 type StorageRegion struct {

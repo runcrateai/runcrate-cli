@@ -1,6 +1,10 @@
 package commands
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 func TestParseGPUFlag(t *testing.T) {
 	tests := []struct {
@@ -179,5 +183,54 @@ func TestParseAutoStopFlag(t *testing.T) {
 	// An explicit empty value must not read as off.
 	if _, err := parseAutoStopFlag("max-runtime", "", maxRuntimeMaxMinutes); err == nil {
 		t.Error("empty value accepted, want an error")
+	}
+}
+
+// resetCreateFlags puts the flags of `instances create` back to their defaults after a test sets some.
+func resetCreateFlags(t *testing.T) {
+	t.Helper()
+	t.Cleanup(func() {
+		for _, name := range []string{"name", "gpu", "gpu-count", "type-id"} {
+			f := instancesCreateCmd.Flags().Lookup(name)
+			f.Value.Set(f.DefValue)
+			f.Changed = false
+		}
+	})
+}
+
+// --gpu-count defaults to 1, and the server refuses a gpu_count beside a type id that is not the type's
+// (a CPU type has 0 GPUs, a big type 8): with --type-id a count is sent only when the user gave one.
+func TestBuildInstanceRequestGPUCountBesideTypeID(t *testing.T) {
+	tests := []struct {
+		name  string
+		flags map[string]string
+		want  int
+	}{
+		{"a type id alone sends no count", map[string]string{"type-id": "cpu-box"}, 0},
+		{"a type id with --gpu-count sends it", map[string]string{"type-id": "h100x8", "gpu-count": "8"}, 8},
+		{"a type id with the colon form sends its count", map[string]string{"type-id": "h100x2", "gpu": "H100:2"}, 2},
+		{"auto-deploy without a count is one GPU", map[string]string{"gpu": "H100"}, 1},
+		{"auto-deploy with the colon form", map[string]string{"gpu": "A100:4"}, 4},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetCreateFlags(t)
+			instancesCreateCmd.Flags().Set("name", "box")
+			for name, value := range tt.flags {
+				if err := instancesCreateCmd.Flags().Set(name, value); err != nil {
+					t.Fatalf("set --%s: %v", name, err)
+				}
+			}
+			req, err := buildInstanceRequest(instancesCreateCmd)
+			if err != nil {
+				t.Fatalf("buildInstanceRequest: %v", err)
+			}
+			if req.GPUCount != tt.want {
+				t.Errorf("GPUCount = %d, want %d", req.GPUCount, tt.want)
+			}
+			if body, _ := json.Marshal(req); tt.want == 0 && strings.Contains(string(body), "gpu_count") {
+				t.Errorf("body %s carries gpu_count", body)
+			}
+		})
 	}
 }

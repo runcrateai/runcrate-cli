@@ -273,6 +273,13 @@ func buildInstanceRequest(cmd *cobra.Command) (api.CreateInstanceRequest, error)
 		return req, err
 	}
 
+	// A type fixes its own GPU count (a CPU type has none) and the server refuses a gpu_count beside
+	// instance_type_id that is not the type's. --gpu-count defaults to 1, so with --type-id send a
+	// count only when the user gave one (the flag or the colon form).
+	if typeID != "" && !cmd.Flags().Changed("gpu-count") && !strings.Contains(gpuRaw, ":") {
+		gpuCount = 0
+	}
+
 	if name == "" {
 		return req, fmt.Errorf("--name is required")
 	}
